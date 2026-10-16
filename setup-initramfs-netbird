@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -e
+
+CMD0="${0##*/}"
+NB_HOSTNAME="${HOSTNAME}-initrd"
+NB_STATEDIR=/etc/netbird/initramfs
+NB_SSH=""
+PID=""
+SETUPDIR=""
+
+usage() {
+    cat <<EOF
+${CMD0} registers a NetBird peer for the initramfs using an isolated netbird daemon that doesn't touch the system service.
+
+usage: ${CMD0} [option...]
+
+Options handled by ${CMD0}:
+
+  --hostname NAME  peer name, defaults to the current hostname plus '-initrd' ("${NB_HOSTNAME}")
+  --ssh            enable the NetBird SSH server (with root login) in the initramfs
+
+Any other argument is passed as-is to 'netbird login'. See 'netbird login --help' for available flags.
+
+i.e.:
+
+  ${CMD0} --ssh --management-url https://netbird.my.net --setup-key-file node.key
+
+Without a setup key, 'netbird login' prints an SSO URL (and QR code) to authenticate the peer.
+EOF
+}
+
+info()  { printf >&2 "${CMD0} INFO : %s\n" "$1"; }
+error() { printf >&2 "${CMD0} ERROR: %s\n" "$1"; }
+die()   { error "$@"; exit 1; }
+
+cleanup() {
+  if [[ -n "$PID" ]]; then
+    kill "$PID" 2>/dev/null || true
+    wait "$PID" 2>/dev/null || true
+  fi
+  if [[ -n "${SETUPDIR}" ]]; then
+    rm -rf "${SETUPDIR}"
+  fi
+}
+trap "cleanup" EXIT
+
+# Set VAR="VALUE" in the initramfs config, replacing a commented-out or
+# existing assignment, or appending one.
+set_config_var() {
+  local file="${NB_STATEDIR}/config" var="$1" value="$2"
+  touch "$file"
+  if grep -Eq "^#?${var}=" "$file"; then
+    sed -Ei "s|^#?${var}=.*|${var}=\"${value}\"|" "$file"
+  else
+    printf '%s="%s"\n' "$var" "$value" >>"$file"
+  fi
+}
+
+# A private mount namespace is needed to isolate the daemon, which requires root.
+if [[ "$(id -u)" != 0 ]]; then
+  exec sudo -- "$0" "$@"
+fi
+
+# Scan arguments looking for our own options
+NEW_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    --hostname=*|-n=*)
+      NB_HOSTNAME="${1#*=}"
+      shift
+      ;;
+    --hostname|-n)
+      NB_HOSTNAME="$2"
+      shift 2
+      ;;
+    --ssh)
+      NB_SSH=1
+      shift
+      ;;
+    *)
+      NEW_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# The hostname ends up in a shell-sourced config file, keep it to plain
+# hostname characters.
+[[ "$NB_HOSTNAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || die "invalid hostname '${NB_HOSTNAME}'"
+
+command -v netbird >/dev/null || die "netbird is not installed"
+
+# mktemp under /tmp keeps the socket path below the unix socket length limit
+SETUPDIR="$(mktemp -d)"
+mkdir -m700 "${SETUPDIR}/varlib" "${SETUPDIR}/cli"
+socket="${SETUPDIR}/netbird.sock"
+
+# The netbird daemon always keeps its profiles in /var/lib/netbird. Run it in a
+# private mount namespace with our own directory mounted over /var/lib, so the
+# system netbird state is never read or modified. 'netbird login' only
+# registers the peer; it doesn't create an interface, so the host network is
+# left alone.
+# shellcheck disable=SC2016 # expanded by the inner shell
+unshare --mount --propagation private -- sh -c '
+  mount --bind "$1/varlib" /var/lib &&
+  mkdir -p /var/lib/netbird &&
+  exec netbird service run --daemon-addr "unix://$1/netbird.sock" --log-file "$1/setup.log"
+' sh "$SETUPDIR" >"${SETUPDIR}/daemon.out" 2>&1 &
+PID="$!"
+
+for _ in $(seq 50); do
+  [[ -S "$socket" ]] && break
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 0.2
+done
+[[ -S "$socket" ]] || die "netbird daemon failed to start: $(cat "${SETUPDIR}/daemon.out" "${SETUPDIR}/setup.log" 2>/dev/null)"
+
+# XDG_CONFIG_HOME keeps the CLI's active-profile bookkeeping out of root's home
+if ! XDG_CONFIG_HOME="${SETUPDIR}/cli" netbird --daemon-addr "unix://${socket}" \
+    login --no-browser --qr --hostname "$NB_HOSTNAME" "${NEW_ARGS[@]}"; then
+  cp -f "${SETUPDIR}/setup.log" /tmp/setup-initramfs-netbird-daemon.log
+  die "Failed to configure netbird. Check daemon logs at /tmp/setup-initramfs-netbird-daemon.log"
+fi
+
+# Stop the daemon so the profile is flushed before copying it
+kill "$PID"
+wait "$PID" 2>/dev/null || true
+PID=""
+
+install -o root -g root -m700 -d "${NB_STATEDIR}"
+install -o root -g root -m600 "${SETUPDIR}/varlib/netbird/default.json" "${NB_STATEDIR}/default.json"
+
+set_config_var NETBIRD_HOSTNAME "$NB_HOSTNAME"
+if [[ -n "$NB_SSH" ]]; then
+  set_config_var NETBIRD_OPTIONS "--allow-server-ssh --enable-ssh-root"
+fi
+
+info "netbird successfully configured.
+
+Next steps:
+  * Review ${NB_STATEDIR}/config (as root)
+  * Run 'update-initramfs -u -k all' to rebuild initramfs
+  * Check the README for security considerations
+
+enjoy!
+"

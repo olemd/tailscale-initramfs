@@ -1,0 +1,3 @@
+# Set the umask for the generated initramfs since it contains the netbird
+# WireGuard private key
+UMASK=0077

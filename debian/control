@@ -17,3 +17,12 @@ Description: tailscale VPN - third-party initramfs integration
  tailscale is a WireGuard VPN. This package provides initramfs integration,
  intended to allow connectivity to/from a tailnet, e.g. to to allow remote
  unlocking of a cryptroot.
+
+Package: netbird-initramfs
+Architecture: all
+Depends: initramfs-tools, netbird, ${misc:Depends}
+Recommends: ca-certificates
+Description: NetBird VPN - third-party initramfs integration
+ NetBird is a WireGuard-based overlay network. This package provides
+ initramfs integration, intended to allow connectivity to/from a NetBird
+ network, e.g. to allow remote unlocking of a cryptroot.

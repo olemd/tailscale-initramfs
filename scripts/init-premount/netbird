@@ -1,0 +1,90 @@
+#!/bin/sh
+
+PREREQ="udev"
+prereqs()
+{
+    echo "$PREREQ"
+}
+
+case $1 in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+[ -x /sbin/netbird ] || exit 0
+
+# shellcheck disable=SC1091
+. /scripts/functions
+
+network_up()
+{
+    for conf in /run/net-*.conf /run/net6-*.conf; do
+        if [ -e "$conf" ]; then
+            # shellcheck disable=SC1090
+            . "$conf"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Unlike tailscaled, netbird has no bootstrap DNS, so it needs a resolv.conf
+# to find the management service.
+# shellcheck disable=SC3043
+create_resolv_conf()
+{
+    if [ -e /etc/resolv.conf ]; then
+        return
+    fi
+
+    local ns
+    for ns in "${IPV4DNS0:-}" "${IPV4DNS1:-}" "${IPV6DNS0:-}" "${IPV6DNS1:-}"; do
+        if [ -n "$ns" ] && [ "$ns" != "0.0.0.0" ]; then
+            echo "nameserver $ns" >> /etc/resolv.conf
+        fi
+    done
+
+    if [ -e /etc/resolv.conf ]; then
+        return
+    fi
+
+    for ns in ${FALLBACK_DNS_SERVERS:-}; do
+        if [ -n "$ns" ]; then
+            echo "nameserver $ns" >> /etc/resolv.conf
+        fi
+    done
+}
+
+# shellcheck disable=SC2086
+run_netbird()
+{
+    # always run configure_networking() before netbird(8); on NFS
+    # mounts this has been done already
+    [ "$BOOT" = nfs ] || configure_networking
+    network_up || true
+    create_resolv_conf
+
+    log_begin_msg "Starting netbird"
+
+    # Foreground mode runs the client without the daemon/CLI split and
+    # applies NETBIRD_OPTIONS (e.g. --allow-server-ssh) to the profile.
+    # XDG_CONFIG_HOME only silences netbird's lookup of a per-user config dir.
+    XDG_CONFIG_HOME=/run/netbird exec /sbin/netbird up \
+        --foreground-mode \
+        --config /var/lib/netbird/default.json \
+        --log-file console \
+        ${NETBIRD_HOSTNAME:+--hostname "$NETBIRD_HOSTNAME"} \
+        ${NETBIRD_OPTIONS:-}
+}
+
+if [ -e /etc/netbird/config ]; then
+    # shellcheck disable=SC1091
+    . /etc/netbird/config
+fi
+
+modprobe wireguard || modprobe tun
+
+run_netbird &
+echo $! > "/run/netbird.pid"

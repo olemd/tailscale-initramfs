@@ -1,0 +1,6 @@
+conf-hooks.d/netbird usr/share/initramfs-tools/conf-hooks.d
+hooks/netbird usr/share/initramfs-tools/hooks
+scripts/init-bottom/netbird usr/share/initramfs-tools/scripts/init-bottom
+scripts/init-premount/netbird usr/share/initramfs-tools/scripts/init-premount
+setup-initramfs-netbird usr/sbin
+config/netbird/config etc/netbird/initramfs

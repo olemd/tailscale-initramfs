@@ -69,6 +69,34 @@ To minimize the attack surface, we can limit the initramfs tailscale node to onl
 Even if the attacker manages to get the node keys, it won't be able to escalate into your tailscale network and all other nodes will be unreacheable.
 
 
+## NetBird (netbird-initramfs)
+
+The `netbird-initramfs` package does the same with [NetBird](https://netbird.io) instead of Tailscale. It can be installed alongside or instead of `tailscale-initramfs`.
+
+0. Requires netbird already be [installed](https://docs.netbird.io/how-to/installation/linux) (the `netbird` package from pkgs.netbird.io)
+
+1. Install the package: `sudo apt-get install netbird-initramfs` (same repository as above)
+
+2. Register the initramfs peer:
+
+```bash
+sudo setup-initramfs-netbird --ssh --setup-key-file node.key
+# self-hosted:
+sudo setup-initramfs-netbird --ssh --management-url https://netbird.example.net --setup-key-file node.key
+```
+
+The peer is named after the host with an `-initrd` suffix (override with `--hostname`). All other arguments are passed to `netbird login`. Without a setup key an SSO URL/QR code is printed instead, but SSO-registered peers expire, so either use a setup key or disable *login expiration* for the peer in the dashboard.
+
+The script registers the peer with a temporary netbird daemon running in a private mount namespace, so the system netbird service and its `/var/lib/netbird` are left untouched. The resulting profile is stored in `/etc/netbird/initramfs/default.json`.
+
+3. Review `/etc/netbird/initramfs/config` and run `sudo update-initramfs -u -k all`.
+
+At boot the client is started with `netbird up --foreground-mode`; extra flags go in `NETBIRD_OPTIONS`. `--ssh` sets `NETBIRD_OPTIONS="--allow-server-ssh --enable-ssh-root"`, enabling NetBird's builtin SSH server (`netbird ssh root@<peer>`); it also needs an access control policy that allows SSH to the peer.
+
+NetBird needs DNS to reach the management service. The DNS servers from DHCP / `ip=` are used, with `FALLBACK_DNS_SERVERS` in the config as a fallback.
+
+Security: the WireGuard private key and the NetBird SSH host key are stored in plain text in the initramfs, as with Tailscale above. Put the initrd peers in their own group and only add policies that allow traffic *from* your admin clients *to* that group, never from it. Note that the netbird binary adds roughly 40 MB (uncompressed) to the initramfs.
+
 ## Prior work and big thanks
 
 + [@darkrain42][gh0] for creating [tailscale-initramfs](https://github.com/darkrain42/tailscale-initramfs), the basis for this entire thing

@@ -14,3 +14,4 @@
 /debian/*.log
 /debian/*.substvars
 /debian/tailscale-initramfs/
+/debian/netbird-initramfs/

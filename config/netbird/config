@@ -1,0 +1,32 @@
+#
+# Seconds to wait for netbird(8) to tear down its interface and firewall
+# rules before leaving the ramdisk.
+#
+NETBIRD_SHUTDOWN_TIMEOUT=10
+
+#
+# Peer hostname reported to the management service. Written by
+# setup-initramfs-netbird.
+#
+#NETBIRD_HOSTNAME=
+
+#
+# Extra options passed to 'netbird up --foreground-mode' at boot, e.g.
+# "--allow-server-ssh --enable-ssh-root" (set by 'setup-initramfs-netbird --ssh').
+#
+#NETBIRD_OPTIONS=
+
+#
+# DNS servers to use if DHCP/ip= does not provide any. Needed to resolve the
+# management service.
+#
+#FALLBACK_DNS_SERVERS="1.1.1.1 9.9.9.9"
+
+#
+# On local (non-NFS) mounts, interfaces matching this pattern are
+# brought down before exiting the ramdisk to avoid dirty network
+# configuration in the normal kernel.
+# The special value 'none' keeps all interfaces up and preserves routing
+# tables and addresses.
+#
+#IFDOWN=*

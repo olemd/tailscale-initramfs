@@ -1,0 +1,76 @@
+#!/bin/sh
+
+PREREQ=""
+
+prereqs()
+{
+    echo "$PREREQ"
+}
+
+case $1 in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+# shellcheck disable=SC1091
+. /usr/share/initramfs-tools/hook-functions
+
+# Refuse to build a half-working image if setup-initramfs-netbird hasn't run:
+# without the profile the peer can't authenticate to the management service.
+if [ ! -e /etc/netbird/initramfs/default.json ]; then
+    echo "netbird-initramfs: /etc/netbird/initramfs/default.json missing, run setup-initramfs-netbird; skipping" >&2
+    exit 0
+fi
+
+NETBIRD_BIN="$(command -v netbird)" || {
+    echo "netbird-initramfs: netbird binary not found; skipping" >&2
+    exit 0
+}
+copy_exec "$NETBIRD_BIN" /sbin/netbird
+
+copy_exec /bin/ip bin
+
+# netbird drives netfilter (nftables) and WireGuard over netlink itself, so
+# only kernel modules are needed. tun is the fallback for userspace WireGuard.
+copy_modules_dir kernel/net/ipv4/netfilter
+copy_modules_dir kernel/net/ipv6/netfilter
+copy_modules_dir kernel/net/netfilter
+manual_add_modules wireguard
+manual_add_modules tun
+
+copy_file config /etc/ssl/certs/ca-certificates.crt
+
+# Copy the netbird profile (WireGuard private key, SSH host key, management
+# URL) created by setup-initramfs-netbird
+copy_file config /etc/netbird/initramfs/default.json /var/lib/netbird/default.json
+
+# Copy config
+mkdir -p "$DESTDIR/etc/netbird"
+if [ -e /etc/netbird/initramfs/config ]; then
+    cp -p "/etc/netbird/initramfs/config" "$DESTDIR/etc/netbird/"
+fi
+
+# Create the home directory etc for the root user to enable netbird ssh. This
+# happens whether or not ssh was requested at setup time, which is redundant,
+# but we at least avoid doing it when dropbear-initramfs is present as it will
+# prevent that from working.
+if home=$(grep -s '^root:' "$DESTDIR/etc/passwd" | cut -d: -f6) && [ -n "$home" ]; then
+    # Ensure /etc/passwd points at password stored in /etc/shadow
+    sed -Ei -e 's/^root:[^:]+/root:x/' "$DESTDIR/etc/passwd"
+else
+   # create home
+   home=$(mktemp -d "$DESTDIR/root-XXXXXX")
+   chmod 0700 "$home"
+   mkdir -m0700 "$home/.ssh"
+   home=${home#"$DESTDIR"}
+fi
+
+#Create user/group required for login
+for x in passwd group; do echo "$x: files"; done >"$DESTDIR/etc/nsswitch.conf"
+echo "root:x:0:0:root:$home:/bin/sh" > "$DESTDIR/etc/passwd"
+echo "root:!:19808:0:99999:7:::" >  "$DESTDIR/etc/shadow"
+echo "root:x:0:" >"$DESTDIR/etc/group"
+
+exit 0

@@ -31,3 +31,21 @@ jobs:
           private_key: ${{ secrets.APT_SIGNING_PRIVATE }}
           key_passphrase: ${{ secrets.APT_SIGNING_PASSPHRASE }}
           debug: true
+
+      # The pinned apt-repo-action only takes a single .deb per run
+      - name: Release netbird-initramfs on Github Pages repository
+        uses: peternewman/apt-repo-action@ff037894ae6f9a6a40c56f0993d083adc23b7986
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_supported_arch: |
+            amd64
+            arm64
+            armhf
+            i386
+          repo_supported_version: stable
+          file: deb/netbird-initramfs*.deb
+          file_target_version: stable
+          public_key: ${{ secrets.APT_SIGNING_PUBLIC }}
+          private_key: ${{ secrets.APT_SIGNING_PRIVATE }}
+          key_passphrase: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+          debug: true

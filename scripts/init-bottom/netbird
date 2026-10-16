@@ -1,0 +1,57 @@
+#!/bin/sh
+
+PREREQ=""
+prereqs()
+{
+    echo "$PREREQ"
+}
+
+case $1 in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+# shellcheck disable=SC1091
+. /scripts/functions
+
+EXE="$(readlink -f /sbin/netbird)" && [ -f "$EXE" ] || exit 1
+
+NETBIRD_SHUTDOWN_TIMEOUT=10
+IFDOWN="*"
+
+if [ -e /etc/netbird/config ]; then
+    # shellcheck disable=SC1091
+    . /etc/netbird/config
+fi
+
+if PID="$(cat /run/netbird.pid)" 2>/dev/null &&
+        [ "$(readlink -f "/proc/$PID/exe")" = "$EXE" ]; then
+    log_begin_msg "Stopping netbird"
+
+    # netbird removes its interface and firewall rules on SIGTERM; give it
+    # time to finish before the interfaces are flushed below.
+    kill -TERM "$PID"
+    i=0
+    while [ -d "/proc/$PID" ] && [ "$i" -lt "$NETBIRD_SHUTDOWN_TIMEOUT" ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+    [ -d "/proc/$PID" ] && kill -KILL "$PID"
+    log_end_msg
+fi
+
+if [ "$BOOT" != nfs ] && [ "$IFDOWN" != none ]; then
+    for IFACE in /sys/class/net/$IFDOWN; do
+        [ -e "$IFACE" ] || continue
+        IFACE="${IFACE#/sys/class/net/}"
+        log_begin_msg "Bringing down $IFACE"
+        ip link    set   dev "$IFACE" down
+        ip address flush dev "$IFACE"
+        ip route   flush dev "$IFACE"
+        log_end_msg
+    done
+fi
+
+exit 0
